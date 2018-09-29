@@ -5,6 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  *)
 
+module Ast = Flow_ast
 
 module type Config = sig
   val include_locs: bool
@@ -14,9 +15,9 @@ end
 module Translate (Impl : Translator_intf.S) (Config : Config) : (sig
   type t
   val program:
-    Loc.t * Loc.t Ast.Statement.t list * (Loc.t * Ast.Comment.t') list ->
+    Loc.t * (Loc.t, Loc.t) Ast.Statement.t list * (Loc.t * Ast.Comment.t') list ->
     t
-  val expression: Loc.t Ast.Expression.t -> t
+  val expression: (Loc.t, Loc.t) Ast.Expression.t -> t
   val errors: (Loc.t * Parse_error.t) list -> t
 end with type t = Impl.t) = struct
   type t = Impl.t
@@ -335,8 +336,8 @@ end with type t = Impl.t) = struct
           "generator", bool arrow.generator;
           "predicate", option predicate arrow.predicate;
           "expression", bool arrow.expression;
-          "returnType", option type_annotation arrow.returnType;
-          "typeParameters", option type_parameter_declaration arrow.typeParameters;
+          "returnType", option type_annotation arrow.return;
+          "typeParameters", option type_parameter_declaration arrow.tparams;
         ]
       )
     | loc, Sequence sequence ->
@@ -410,7 +411,7 @@ end with type t = Impl.t) = struct
     | loc, TypeCast typecast -> TypeCast.(
         node "TypeCastExpression" loc [
           "expression", expression typecast.expression;
-          "typeAnnotation", type_annotation typecast.typeAnnotation;
+          "typeAnnotation", type_annotation typecast.annot;
         ]
       )
     | loc, Assignment assignment -> Assignment.(
@@ -450,6 +451,7 @@ end with type t = Impl.t) = struct
         let operator = match logical.operator with
         | Or -> "||"
         | And -> "&&"
+        | NullishCoalesce -> "??"
         in
         node "LogicalExpression" loc [
           "operator", string operator;
@@ -467,28 +469,23 @@ end with type t = Impl.t) = struct
     | loc, New _new -> New.(
         node "NewExpression" loc [
           "callee", expression _new.callee;
+          "typeArguments", option type_parameter_instantiation _new.targs;
           "arguments", array_of_list expression_or_spread _new.arguments;
         ]
       )
-    | loc, Call call -> Call.(
-        node "CallExpression" loc [
-          "callee", expression call.callee;
-          "arguments", array_of_list expression_or_spread call.arguments;
-          "optional", bool call.optional;
-        ]
+    | loc, Call call ->
+        node "CallExpression" loc (call_node_properties call)
+    | loc, OptionalCall opt_call -> OptionalCall.(
+        node "OptionalCallExpression" loc (call_node_properties opt_call.call @ [
+          "optional", bool opt_call.optional;
+        ])
       )
-    | loc, Member member -> Member.(
-        let property = match member.property with
-        | PropertyIdentifier id -> identifier id
-        | PropertyPrivateName name -> private_name name
-        | PropertyExpression expr -> expression expr
-        in
-        node "MemberExpression" loc [
-          "object", expression member._object;
-          "property", property;
-          "computed", bool member.computed;
-          "optional", bool member.optional;
-        ]
+    | loc, Member member ->
+        node "MemberExpression" loc (member_node_properties member)
+    | loc, OptionalMember opt_member -> OptionalMember.(
+        node "OptionalMemberExpression" loc (member_node_properties opt_member.member @ [
+          "optional", bool opt_member.optional;
+        ])
       )
     | loc, Yield yield -> Yield.(
         node "YieldExpression" loc [
@@ -543,8 +540,8 @@ end with type t = Impl.t) = struct
       "generator", bool fn.generator;
       "predicate", option predicate fn.predicate;
       "expression", bool fn.expression;
-      "returnType", option type_annotation fn.returnType;
-      "typeParameters", option type_parameter_declaration fn.typeParameters;
+      "returnType", option type_annotation fn.return;
+      "typeParameters", option type_parameter_declaration fn.tparams;
     ]
   )
 
@@ -561,8 +558,8 @@ end with type t = Impl.t) = struct
       "generator", bool _function.generator;
       "predicate", option predicate _function.predicate;
       "expression", bool _function.expression;
-      "returnType", option type_annotation _function.returnType;
-      "typeParameters", option type_parameter_declaration _function.typeParameters;
+      "returnType", option type_annotation _function.return;
+      "typeParameters", option type_parameter_declaration _function.tparams;
     ]
   )
 
@@ -579,11 +576,11 @@ end with type t = Impl.t) = struct
     ]
 
   and pattern_identifier loc {
-    Pattern.Identifier.name; typeAnnotation; optional;
+    Pattern.Identifier.name; annot; optional;
   } =
     node "Identifier" loc [
       "name", string (snd name);
-      "typeAnnotation", option type_annotation typeAnnotation;
+      "typeAnnotation", option type_annotation annot;
       "optional", bool optional;
     ]
 
@@ -596,7 +593,7 @@ end with type t = Impl.t) = struct
 
   and catch (loc, c) = Statement.Try.CatchClause.(
     node "CatchClause" loc [
-      "param", pattern c.param;
+      "param", option pattern c.param;
       "body", block c.body;
     ]
   )
@@ -607,55 +604,61 @@ end with type t = Impl.t) = struct
     ]
 
   and declare_variable (loc, d) = Statement.DeclareVariable.(
-    let id_loc = Loc.btwn (fst d.id) (match d.typeAnnotation with
-      | Some typeAnnotation -> fst typeAnnotation
+    let id_loc = Loc.btwn (fst d.id) (match d.annot with
+      | Some annot -> fst annot
       | None -> fst d.id) in
     node "DeclareVariable" loc [
       "id", pattern_identifier id_loc {
         Pattern.Identifier.name = d.id;
-                           typeAnnotation = d.typeAnnotation;
+                           annot = d.annot;
                            optional = false;
       };
     ]
   )
 
   and declare_function (loc, d) = Statement.DeclareFunction.(
-    let id_loc = Loc.btwn (fst d.id) (fst d.typeAnnotation) in
+    let id_loc = Loc.btwn (fst d.id) (fst d.annot) in
     node "DeclareFunction" loc [
       "id", pattern_identifier id_loc {
         Pattern.Identifier.name = d.id;
-                           typeAnnotation = Some d.typeAnnotation;
+                           annot = Some d.annot;
                            optional = false;
       };
       "predicate", option predicate d.predicate
     ]
   )
 
-  and declare_class (loc, d) = Statement.DeclareClass.(
+  and declare_class (loc, { Statement.DeclareClass.
+    id;
+    tparams;
+    body;
+    extends;
+    implements;
+    mixins;
+  }) =
     (* TODO: extends shouldn't return an array *)
-    let extends = match d.extends with
+    let extends = match extends with
     | Some extends -> array [interface_extends extends]
     | None -> array []
     in
     node "DeclareClass" loc [
-      "id", identifier d.id;
-      "typeParameters", option type_parameter_declaration d.typeParameters;
-      "body", object_type d.body;
+      "id", identifier id;
+      "typeParameters", option type_parameter_declaration tparams;
+      "body", object_type body;
       "extends", extends;
-      "implements", array_of_list class_implements d.implements;
-      "mixins", array_of_list interface_extends d.mixins;
+      "implements", array_of_list class_implements implements;
+      "mixins", array_of_list interface_extends mixins;
     ]
-  )
 
   and declare_interface (loc, { Statement.Interface.
     id;
-    typeParameters;
+    tparams;
     body;
     extends;
   }) =
     node "DeclareInterface" loc [
       "id", identifier id;
-      "typeParameters", option type_parameter_declaration typeParameters;
+      "typeParameters", option type_parameter_declaration tparams;
       "body", object_type body;
       "extends", array_of_list interface_extends extends;
     ]
@@ -683,19 +686,19 @@ end with type t = Impl.t) = struct
 
   and declare_type_alias (loc, { Statement.TypeAlias.
     id;
-    typeParameters;
+    tparams;
     right;
   }) =
     node "DeclareTypeAlias" loc [
       "id", identifier id;
-      "typeParameters", option type_parameter_declaration typeParameters;
+      "typeParameters", option type_parameter_declaration tparams;
       "right", _type right;
     ]
 
   and type_alias (loc, alias) =  Statement.TypeAlias.(
     node "TypeAlias" loc [
       "id", identifier alias.id;
-      "typeParameters", option type_parameter_declaration alias.typeParameters;
+      "typeParameters", option type_parameter_declaration alias.tparams;
       "right", _type alias.right;
     ]
   )
@@ -703,43 +706,44 @@ end with type t = Impl.t) = struct
     let name = if declare then "DeclareOpaqueType" else "OpaqueType" in
     node name loc [
       "id", identifier opaque_t.id;
-      "typeParameters", option type_parameter_declaration opaque_t.typeParameters;
+      "typeParameters", option type_parameter_declaration opaque_t.tparams;
       "impltype", option _type opaque_t.impltype;
       "supertype", option _type opaque_t.supertype;
     ]
   )
 
-  and class_declaration (loc, c) = Class.(
-    node "ClassDeclaration" loc [
+  and class_declaration ast = class_helper "ClassDeclaration" ast
+
+  and class_expression ast = class_helper "ClassExpression" ast
+
+  and class_helper node_type (loc, c) = Class.(
+    let super, super_targs = match c.extends with
+    | Some (_, { Extends.expr; targs }) -> Some expr, targs
+    | None -> None, None
+    in
+    node node_type loc [
       (* estree hasn't come around to the idea that class decls can have
          optional ids, but acorn, babel, espree and esprima all have, so let's
          do it too. see https://github.com/estree/estree/issues/98 *)
       "id", option identifier c.id;
       "body", class_body c.body;
-      "superClass", option expression c.superClass;
-      "typeParameters", option type_parameter_declaration c.typeParameters;
-      "superTypeParameters", option type_parameter_instantiation c.superTypeParameters;
+      "typeParameters", option type_parameter_declaration c.tparams;
+      "superClass", option expression super;
+      "superTypeParameters", option type_parameter_instantiation super_targs;
       "implements", array_of_list class_implements c.implements;
-      "decorators", array_of_list expression c.classDecorators;
+      "decorators", array_of_list class_decorator c.classDecorators;
     ]
   )
 
-  and class_expression (loc, c) = Class.(
-    node "ClassExpression" loc [
-      "id", option identifier c.id;
-      "body", class_body c.body;
-      "superClass", option expression c.superClass;
-      "typeParameters", option type_parameter_declaration c.typeParameters;
-      "superTypeParameters", option type_parameter_instantiation c.superTypeParameters;
-      "implements", array_of_list class_implements c.implements;
-      "decorators", array_of_list expression c.classDecorators;
+  and class_decorator (loc, { Ast.Class.Decorator.expression = expr }) =
+    node "Decorator" loc [
+      "expression", expression expr;
     ]
-  )
 
   and class_implements (loc, implements) = Class.Implements.(
     node "ClassImplements" loc [
       "id", identifier implements.id;
-      "typeParameters", option type_parameter_instantiation implements.typeParameters;
+      "typeParameters", option type_parameter_instantiation implements.targs;
     ]
   )
 
@@ -772,7 +776,7 @@ end with type t = Impl.t) = struct
       "kind", string kind;
       "static", bool static;
       "computed", bool computed;
-      "decorators", array_of_list expression decorators;
+      "decorators", array_of_list class_decorator decorators;
     ]
 
   and class_private_field (loc, prop) = Class.PrivateField.(
@@ -780,7 +784,7 @@ end with type t = Impl.t) = struct
     node "ClassPrivateProperty" loc [
       "key", identifier key;
       "value", option expression prop.value;
-      "typeAnnotation", option type_annotation prop.typeAnnotation;
+      "typeAnnotation", option type_annotation prop.annot;
       "static", bool prop.static;
       "variance", option variance prop.variance;
     ]
@@ -795,7 +799,7 @@ end with type t = Impl.t) = struct
     node "ClassProperty" loc [
       "key", key;
       "value", option expression prop.value;
-      "typeAnnotation", option type_annotation prop.typeAnnotation;
+      "typeAnnotation", option type_annotation prop.annot;
       "computed", bool computed;
       "static", bool prop.static;
       "variance", option variance prop.variance;
@@ -805,7 +809,7 @@ end with type t = Impl.t) = struct
   and interface_declaration (loc, i) = Statement.Interface.(
     node "InterfaceDeclaration" loc [
       "id", identifier i.id;
-      "typeParameters", option type_parameter_declaration i.typeParameters;
+      "typeParameters", option type_parameter_declaration i.tparams;
       "body", object_type i.body;
       "extends", array_of_list interface_extends i.extends;
     ]
@@ -818,7 +822,7 @@ end with type t = Impl.t) = struct
     in
     node "InterfaceExtends" loc [
       "id", id;
-      "typeParameters", option type_parameter_instantiation g.typeParameters;
+      "typeParameters", option type_parameter_instantiation g.targs;
     ]
   )
 
@@ -826,12 +830,12 @@ end with type t = Impl.t) = struct
     | loc, Object obj ->
         node "ObjectPattern" loc [
           "properties", array_of_list object_pattern_property obj.Object.properties;
-          "typeAnnotation", option type_annotation obj.Object.typeAnnotation;
+          "typeAnnotation", option type_annotation obj.Object.annot;
         ]
     | loc, Array arr ->
         node "ArrayPattern" loc [
           "elements", array_of_list (option array_pattern_element) arr.Array.elements;
-          "typeAnnotation", option type_annotation arr.Array.typeAnnotation;
+          "typeAnnotation", option type_annotation arr.Array.annot;
         ]
     | loc, Assignment { Assignment.left; right } ->
         node "AssignmentPattern" loc [
@@ -1027,6 +1031,7 @@ end with type t = Impl.t) = struct
     | Nullable t -> nullable_type loc t
     | Function fn -> function_type (loc, fn)
     | Object o -> object_type (loc, o)
+    | Interface i -> interface_type (loc, i)
     | Array t -> array_type loc t
     | Generic g -> generic_type (loc, g)
     | Union (t0, t1, ts) -> union_type (loc, t0::t1::ts)
@@ -1064,16 +1069,16 @@ end with type t = Impl.t) = struct
     let (_, { Params.params; rest }) = fn.params in
     node "FunctionTypeAnnotation" loc [
       "params", array_of_list function_type_param params;
-      "returnType", _type fn.returnType;
+      "returnType", _type fn.return;
       "rest", option function_type_rest rest;
-      "typeParameters", option type_parameter_declaration fn.typeParameters;
+      "typeParameters", option type_parameter_declaration fn.tparams;
     ]
   )
 
   and function_type_param (loc, param) = Type.Function.Param.(
     node "FunctionTypeParam" loc [
       "name", option identifier param.name;
-      "typeAnnotation", _type param.typeAnnotation;
+      "typeAnnotation", _type param.annot;
       "optional", bool param.optional;
     ]
   )
@@ -1089,30 +1094,35 @@ end with type t = Impl.t) = struct
     function_type_param argument
 
   and object_type (loc, o) = Type.Object.(
-    let props, ixs, calls = List.fold_left (fun (props, ixs, calls) -> function
+    let props, ixs, calls, slots = List.fold_left (fun (props, ixs, calls, slots) ->
+      function
       | Property p ->
         let prop = object_type_property p in
-        prop::props, ixs, calls
+        prop::props, ixs, calls, slots
       | SpreadProperty p ->
         let prop = object_type_spread_property p in
-        prop::props, ixs, calls
+        prop::props, ixs, calls, slots
       | Indexer i ->
         let ix = object_type_indexer i in
-        props, ix::ixs, calls
+        props, ix::ixs, calls, slots
       | CallProperty c ->
         let call = object_type_call_property c in
-        props, ixs, call::calls
-    ) ([], [], []) o.properties in
+        props, ixs, call::calls, slots
+      | InternalSlot s ->
+        let slot = object_type_internal_slot s in
+        props, ixs, calls, slot::slots
+    ) ([], [], [], []) o.properties in
     node "ObjectTypeAnnotation" loc [
       "exact", bool o.exact;
       "properties", array (List.rev props);
       "indexers", array (List.rev ixs);
       "callProperties", array (List.rev calls);
+      "internalSlots", array (List.rev slots);
     ]
   )
 
   and object_type_property (loc, { Type.Object.Property.
-    key; value; optional; static; variance = variance_; _method;
+    key; value; optional; static; proto; variance = variance_; _method;
   }) =
     let key = match key with
     | Expression.Object.Property.Literal lit -> literal lit
@@ -1133,6 +1143,7 @@ end with type t = Impl.t) = struct
       "method", bool _method;
       "optional", bool optional;
       "static", bool static;
+      "proto", bool proto;
       "variance", option variance variance_;
       "kind", string kind;
     ]
@@ -1160,6 +1171,23 @@ end with type t = Impl.t) = struct
     ]
   )
 
+  and object_type_internal_slot (loc, slot) = Type.Object.InternalSlot.(
+    node "ObjectTypeInternalSlot" loc [
+      "id", identifier slot.id;
+      "optional", bool slot.optional;
+      "static", bool slot.static;
+      "method", bool slot._method;
+      "value", _type slot.value;
+    ]
+  )
+
+  and interface_type (loc, i) = Type.Interface.(
+    node "InterfaceTypeAnnotation" loc [
+      "extends", array_of_list interface_extends i.extends;
+      "body", object_type i.body;
+    ]
+  )
+
   and array_type loc t =
     node "ArrayTypeAnnotation" loc [
       "elementType", (_type t);
@@ -1183,7 +1211,7 @@ end with type t = Impl.t) = struct
     in
     node "GenericTypeAnnotation" loc [
       "id", id;
-      "typeParameters", option type_parameter_instantiation g.typeParameters;
+      "typeParameters", option type_parameter_instantiation g.targs;
     ]
   )
 
@@ -1234,11 +1262,10 @@ end with type t = Impl.t) = struct
       "typeAnnotation", _type ty;
     ]
 
-  and type_parameter_declaration (loc, params) = Type.ParameterDeclaration.(
+  and type_parameter_declaration (loc, params) =
     node "TypeParameterDeclaration" loc [
-      "params", array_of_list type_param params.params;
+      "params", array_of_list type_param params;
     ]
-  )
 
   and type_param (loc, { Type.ParameterDeclaration.TypeParam.
     name = (_, name);
@@ -1255,13 +1282,12 @@ end with type t = Impl.t) = struct
       "default", option _type default;
     ]
 
-  and type_parameter_instantiation (loc, params) = Type.ParameterInstantiation.(
+  and type_parameter_instantiation (loc, targs) =
     node "TypeParameterInstantiation" loc [
-      "params", array_of_list _type params.params;
+      "params", array_of_list _type targs;
     ]
-  )
 
-  and jsx_element (loc, (element: Loc.t JSX.element)) = JSX.(
+  and jsx_element (loc, (element: (Loc.t, Loc.t) JSX.element)) = JSX.(
     node "JSXElement" loc [
       "openingElement", jsx_opening element.openingElement;
       "closingElement", option jsx_closing element.closingElement;
@@ -1269,7 +1295,7 @@ end with type t = Impl.t) = struct
     ]
   )
 
-  and jsx_fragment (loc, (fragment: Loc.t JSX.fragment)) = JSX.(
+  and jsx_fragment (loc, (fragment: (Loc.t, Loc.t) JSX.fragment)) = JSX.(
     node "JSXFragment" loc [
       "openingFragment", jsx_opening_fragment fragment.frag_openingElement;
       "children", array_of_list jsx_child fragment.frag_children;
@@ -1442,5 +1468,24 @@ end with type t = Impl.t) = struct
       | Inferred -> "InferredPredicate", []
     in
     node _type loc value
+  )
+
+  and call_node_properties call = Expression.Call.([
+    "callee", expression call.callee;
+    "typeArguments", option type_parameter_instantiation call.targs;
+    "arguments", array_of_list expression_or_spread call.arguments;
+  ])
+
+  and member_node_properties member = Expression.Member.(
+    let property = match member.property with
+    | PropertyIdentifier id -> identifier id
+    | PropertyPrivateName name -> private_name name
+    | PropertyExpression expr -> expression expr
+    in
+    [
+      "object", expression member._object;
+      "property", property;
+      "computed", bool member.computed;
+    ]
   )
 end

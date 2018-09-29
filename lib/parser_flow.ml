@@ -5,6 +5,8 @@
  * LICENSE file in the root directory of this source tree.
  *)
 
+module Ast = Flow_ast
+
 open Token
 open Parser_env
 module Error = Parse_error
@@ -297,14 +299,14 @@ module rec Parse : PARSER = struct
         then error env Error.UnexpectedTypeAnnotation;
         Expect.token env T_PLING
       end;
-      let typeAnnotation =
+      let annot =
         if Peek.token env = T_COLON
         then Some (Type.annotation env)
         else None in
       Ast.Pattern.Identifier.({
         name;
         optional;
-        typeAnnotation;
+        annot;
       })
 
     in fun env ?(no_optional=false) restricted_error ->

@@ -5,7 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  *)
 
-open Ast
+open Flow_ast
 module Error = Parse_error
 module SSet = Set.Make(String)
 
@@ -56,14 +56,7 @@ end = struct
   }
 
   let create lex_env mode =
-    let lexbuf = Lex_env.lexbuf lex_env in
-    (* copy all the mutable things so that we have a distinct lexing environment
-     * that does not interfere with ordinary lexer operations *)
-    (* lex_buffer has type bytes, which is itself mutable, but the lexer
-     * promises not to change it so a shallow copy should be fine *)
-    (* I don't know how to do a copy without an update *)
-    let lexbuf = lexbuf |> Obj.repr |> Obj.dup |> Obj.obj in
-    let lex_env = Lex_env.with_lexbuf ~lexbuf lex_env in
+    let lex_env = Lex_env.clone lex_env in
     {
       la_results = [||];
       la_num_lexed = 0;
@@ -104,15 +97,7 @@ end = struct
       | Lex_mode.TEMPLATE -> Lexer.template_tail lex_env
       | Lex_mode.REGEXP -> Lexer.regexp lex_env
     in
-    let cloned_env =
-      let lexbuf =
-        Lex_env.lexbuf lex_env
-        |> Obj.repr
-        |> Obj.dup
-        |> Obj.obj
-      in
-      Lex_env.with_lexbuf ~lexbuf lex_env
-    in
+    let cloned_env = Lex_env.clone lex_env in
     t.la_lex_env <- lex_env;
     t.la_results.(t.la_num_lexed) <- Some (cloned_env, lex_result);
     t.la_num_lexed <- t.la_num_lexed + 1
@@ -158,6 +143,7 @@ type parse_options = {
   esproposal_decorators: bool;
   esproposal_export_star_as: bool;
   esproposal_optional_chaining: bool;
+  esproposal_nullish_coalescing: bool;
   types: bool;
   types_in_comments: bool;
   use_strict: bool;
@@ -168,6 +154,7 @@ let default_parse_options = {
   esproposal_decorators = false;
   esproposal_export_star_as = false;
   esproposal_optional_chaining = false;
+  esproposal_nullish_coalescing = false;
   types = true;
   types_in_comments = true;
   use_strict = false;
@@ -291,8 +278,6 @@ let error_at env (loc, e) =
   match env.error_callback with
   | None -> ()
   | Some callback -> callback env e
-let comment_list env =
-  List.iter (fun c -> env.comments := c :: !(env.comments))
 let record_export env (loc, export_name) =
   if export_name = "" then () else (* empty identifiers signify an error, don't export it *)
   let exports = !(env.exports) in
@@ -456,8 +441,9 @@ let is_reserved str_val =
 
 let is_reserved_type str_val =
   match str_val with
-  | "any" | "bool" | "boolean" | "empty" | "false" | "mixed" | "null"
-  | "number" | "static" | "string" | "true" | "typeof" | "void" -> true
+  | "any" | "bool" | "boolean" | "empty" | "false" | "mixed" | "null" | "number"
+  | "static" | "string" | "true" | "typeof" | "void" | "interface" | "extends"
+    -> true
   | _ -> false
 
 (* Answer questions about what comes next *)
@@ -619,6 +605,7 @@ module Peek = struct
       | T_PLUS_ASSIGN
       | T_ASSIGN
       | T_PLING_PERIOD
+      | T_PLING_PLING
       | T_PLING
       | T_COLON
       | T_OR
@@ -760,7 +747,7 @@ module Eat = struct
     env.lex_env := Peek.lex_env env;
 
     error_list env (Peek.errors env);
-    comment_list env (Peek.comments env);
+    env.comments := List.rev_append (Peek.comments env) !(env.comments);
     env.last_lex_result := Some (lookahead ~i:0 env);
 
     Lookahead.junk !(env.lookahead)
@@ -828,7 +815,7 @@ module Try = struct
 
   type saved_state = {
     saved_errors          : (Loc.t * Error.t) list;
-    saved_comments        : Loc.t Ast.Comment.t list;
+    saved_comments        : Loc.t Flow_ast.Comment.t list;
     saved_last_lex_result : Lex_result.t option;
     saved_lex_mode_stack  : Lex_mode.t list;
     saved_lex_env         : Lex_env.t;
@@ -881,4 +868,9 @@ module Try = struct
     let saved_state = save_state env in
     try success env saved_state (parse env)
     with Rollback -> rollback_state env saved_state
+
+  let or_else env ~fallback parse =
+    match to_parse env parse with
+    | ParsedSuccessfully result -> result
+    | FailedToParse -> fallback
 end

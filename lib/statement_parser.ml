@@ -5,41 +5,43 @@
  * LICENSE file in the root directory of this source tree.
  *)
 
+module Ast = Flow_ast
+
 open Token
 open Parser_env
-open Ast
+open Flow_ast
 module Error = Parse_error
 module SSet = Set.Make(String)
 
 open Parser_common
 
 module type STATEMENT = sig
- val for_: env -> Loc.t Statement.t
- val if_: env -> Loc.t Statement.t
- val let_: env -> Loc.t Statement.t
- val try_: env -> Loc.t Statement.t
- val while_: env -> Loc.t Statement.t
- val with_: env -> Loc.t Statement.t
- val block: env -> Loc.t Statement.t
- val break: env -> Loc.t Statement.t
- val continue: env -> Loc.t Statement.t
- val debugger: env -> Loc.t Statement.t
- val declare: ?in_module:bool -> env -> Loc.t Statement.t
- val declare_export_declaration: ?allow_export_type:bool -> env -> Loc.t Statement.t
- val declare_opaque_type : env -> Loc.t Statement.t
- val do_while: env -> Loc.t Statement.t
- val empty: env -> Loc.t Statement.t
- val export_declaration: decorators:Loc.t Expression.t list -> env -> Loc.t Statement.t
- val expression: env -> Loc.t Statement.t
- val import_declaration: env -> Loc.t Statement.t
- val interface: env -> Loc.t Statement.t
- val maybe_labeled: env -> Loc.t Statement.t
- val opaque_type : env -> Loc.t Statement.t
- val return: env -> Loc.t Statement.t
- val switch: env -> Loc.t Statement.t
- val throw: env -> Loc.t Statement.t
- val type_alias: env -> Loc.t Statement.t
- val var_or_const: env -> Loc.t Statement.t
+ val for_: env -> (Loc.t, Loc.t) Statement.t
+ val if_: env -> (Loc.t, Loc.t) Statement.t
+ val let_: env -> (Loc.t, Loc.t) Statement.t
+ val try_: env -> (Loc.t, Loc.t) Statement.t
+ val while_: env -> (Loc.t, Loc.t) Statement.t
+ val with_: env -> (Loc.t, Loc.t) Statement.t
+ val block: env -> (Loc.t, Loc.t) Statement.t
+ val break: env -> (Loc.t, Loc.t) Statement.t
+ val continue: env -> (Loc.t, Loc.t) Statement.t
+ val debugger: env -> (Loc.t, Loc.t) Statement.t
+ val declare: ?in_module:bool -> env -> (Loc.t, Loc.t) Statement.t
+ val declare_export_declaration: ?allow_export_type:bool -> env -> (Loc.t, Loc.t) Statement.t
+ val declare_opaque_type : env -> (Loc.t, Loc.t) Statement.t
+ val do_while: env -> (Loc.t, Loc.t) Statement.t
+ val empty: env -> (Loc.t, Loc.t) Statement.t
+ val export_declaration: decorators:(Loc.t, Loc.t) Class.Decorator.t list -> env -> (Loc.t, Loc.t) Statement.t
+ val expression: env -> (Loc.t, Loc.t) Statement.t
+ val import_declaration: env -> (Loc.t, Loc.t) Statement.t
+ val interface: env -> (Loc.t, Loc.t) Statement.t
+ val maybe_labeled: env -> (Loc.t, Loc.t) Statement.t
+ val opaque_type : env -> (Loc.t, Loc.t) Statement.t
+ val return: env -> (Loc.t, Loc.t) Statement.t
+ val switch: env -> (Loc.t, Loc.t) Statement.t
+ val throw: env -> (Loc.t, Loc.t) Statement.t
+ val type_alias: env -> (Loc.t, Loc.t) Statement.t
+ val var_or_const: env -> (Loc.t, Loc.t) Statement.t
 end
 
 module Statement
@@ -51,7 +53,7 @@ module Statement
 : STATEMENT = struct
   type for_lhs =
     | For_expression of pattern_cover
-    | For_declaration of (Loc.t * Loc.t Ast.Statement.VariableDeclaration.t)
+    | For_declaration of (Loc.t * (Loc.t, Loc.t) Ast.Statement.VariableDeclaration.t)
 
   (* FunctionDeclaration is not a valid Statement, but Annex B sometimes allows it.
      However, AsyncFunctionDeclaration and GeneratorFunctionDeclaration are never
@@ -388,9 +390,15 @@ module Statement
     | T_CATCH ->
         let catch = with_loc (fun env ->
           Expect.token env T_CATCH;
-          Expect.token env T_LPAREN;
-          let param = Parse.pattern env Error.StrictCatchVariable in
-          Expect.token env T_RPAREN;
+          let param = if Peek.token env = T_LPAREN
+          then begin
+            Expect.token env T_LPAREN;
+            let p = Some (Parse.pattern env Error.StrictCatchVariable) in
+            Expect.token env T_RPAREN;
+            p
+          end else
+            None
+          in
           let body = Parse.block_body env in
           { Ast.Statement.Try.CatchClause.
             param;
@@ -527,14 +535,14 @@ module Statement
     Expect.token env T_TYPE;
     Eat.push_lex_mode env Lex_mode.TYPE;
     let id = Type.type_identifier env in
-    let typeParameters = Type.type_parameter_declaration_with_defaults env in
+    let tparams = Type.type_parameter_declaration_with_defaults env in
     Expect.token env T_ASSIGN;
     let right = Type._type env in
     Eat.semicolon env;
     Eat.pop_lex_mode env;
     Statement.TypeAlias.({
       id;
-      typeParameters;
+      tparams;
       right;
     })
 
@@ -559,7 +567,7 @@ module Statement
     Expect.token env T_TYPE;
     Eat.push_lex_mode env Lex_mode.TYPE;
     let id = Type.type_identifier env in
-    let typeParameters = Type.type_parameter_declaration_with_defaults env in
+    let tparams = Type.type_parameter_declaration_with_defaults env in
     let supertype = match Peek.token env with
     | T_COLON ->
         Expect.token env T_COLON;
@@ -574,7 +582,7 @@ module Statement
     Eat.pop_lex_mode env;
     Statement.OpaqueType.({
       id;
-      typeParameters;
+      tparams;
       impltype;
       supertype;
     })
@@ -592,34 +600,19 @@ module Statement
         loc, Statement.OpaqueType opaque_t
     | _ -> Parse.statement env
 
-  and interface_helper =
-    let rec supers env acc =
-      let super = Type.generic env in
-      let acc = super::acc in
-      match Peek.token env with
-      | T_COMMA ->
-          Expect.token env T_COMMA;
-          supers env acc
-      | _ -> List.rev acc
-    in
-    fun env ->
-      if not (should_parse_types env)
-      then error env Error.UnexpectedTypeInterface;
-      Expect.token env T_INTERFACE;
-      let id = Type.type_identifier env in
-      let typeParameters = Type.type_parameter_declaration_with_defaults env in
-      let extends = if Peek.token env = T_EXTENDS
-      then begin
-        Expect.token env T_EXTENDS;
-        supers env []
-      end else [] in
-      let body = Type._object ~allow_static:false env in
-      Statement.Interface.({
-        id;
-        typeParameters;
-        body;
-        extends;
-      })
+  and interface_helper env =
+    if not (should_parse_types env)
+    then error env Error.UnexpectedTypeInterface;
+    Expect.token env T_INTERFACE;
+    let id = Type.type_identifier env in
+    let tparams = Type.type_parameter_declaration_with_defaults env in
+    let { Ast.Type.Interface.extends; body } = Type.interface_helper env in
+    Statement.Interface.({
+      id;
+      tparams;
+      body;
+      extends;
+    })
 
   and declare_interface env = with_loc (fun env ->
     Expect.token env T_DECLARE;
@@ -651,7 +644,7 @@ module Statement
       let env = env |> with_strict true in
       Expect.token env T_CLASS;
       let id = Parse.identifier env in
-      let typeParameters = Type.type_parameter_declaration_with_defaults env in
+      let tparams = Type.type_parameter_declaration_with_defaults env in
       let extends = if Expect.maybe env T_EXTENDS then Some (Type.generic env) else None in
       let mixins = match Peek.token env with
       | T_IDENTIFIER { raw = "mixins"; _ } -> Eat.token env; mixins env []
@@ -661,10 +654,10 @@ module Statement
       | T_IMPLEMENTS -> Eat.token env; Object.class_implements env []
       | _ -> []
       in
-      let body = Type._object ~allow_static:true env in
+      let body = Type._object ~allow_static:true ~allow_proto:true env in
       Statement.DeclareClass.({
         id;
-        typeParameters;
+        tparams;
         body;
         extends;
         mixins;
@@ -681,23 +674,23 @@ module Statement
     Expect.token env T_FUNCTION;
     let id = Parse.identifier env in
     let start_sig_loc = Peek.loc env in
-    let typeParameters = Type.type_parameter_declaration env in
+    let tparams = Type.type_parameter_declaration env in
     let params = Type.function_param_list env in
     Expect.token env T_COLON;
-    let returnType = Type._type env in
-    let end_loc = fst returnType in
+    let return = Type._type env in
+    let end_loc = fst return in
     let loc = Loc.btwn start_sig_loc end_loc in
-    let typeAnnotation = loc, Ast.Type.(Function {Function.
+    let annot = loc, Ast.Type.(Function {Function.
       params;
-      returnType;
-      typeParameters;
+      return;
+      tparams;
     }) in
-    let typeAnnotation = fst typeAnnotation, typeAnnotation in
+    let annot = fst annot, annot in
     let predicate = Type.predicate_opt env in
     Eat.semicolon env;
     Statement.DeclareFunction.({
       id;
-      typeAnnotation;
+      annot;
       predicate;
     })
 
@@ -715,10 +708,10 @@ module Statement
 
   and declare_var env =
     Expect.token env T_VAR;
-    let _loc, { Pattern.Identifier.name; typeAnnotation; _; } =
+    let _loc, { Pattern.Identifier.name; annot; _; } =
       Parse.identifier_with_type env ~no_optional:true Error.StrictVarName in
     Eat.semicolon env;
-    Statement.DeclareVariable.({ id=name; typeAnnotation; })
+    Statement.DeclareVariable.({ id=name; annot; })
 
   and declare_var_statement env = with_loc (fun env ->
     Expect.token env T_DECLARE;

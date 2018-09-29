@@ -5,9 +5,11 @@
  * LICENSE file in the root directory of this source tree.
  *)
 
+module Ast = Flow_ast
+
 open Token
 open Parser_env
-open Ast
+open Flow_ast
 module Error = Parse_error
 
 module JSX (Parse: Parser_common.PARSER) = struct
@@ -211,8 +213,8 @@ module JSX (Parse: Parser_common.PARSER) = struct
     type element_or_closing =
       | Closing of Loc.t JSX.Closing.t
       | ClosingFragment of Loc.t
-      | ChildElement of (Loc.t * Loc.t JSX.element)
-      | ChildFragment of (Loc.t * Loc.t JSX.fragment)
+      | ChildElement of (Loc.t * (Loc.t, Loc.t) JSX.element)
+      | ChildFragment of (Loc.t * (Loc.t, Loc.t) JSX.fragment)
 
     let rec child env =
       match Peek.token env with

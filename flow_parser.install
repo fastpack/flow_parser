@@ -11,6 +11,7 @@ lib: [
   "_build/install/default/lib/flow_parser/estree_translator.ml" {"estree_translator.ml"}
   "_build/install/default/lib/flow_parser/expression_parser.ml" {"expression_parser.ml"}
   "_build/install/default/lib/flow_parser/file_key.ml" {"file_key.ml"}
+  "_build/install/default/lib/flow_parser/flow_ast.ml" {"flow_ast.ml"}
   "_build/install/default/lib/flow_parser/flow_parser.cmi" {"flow_parser.cmi"}
   "_build/install/default/lib/flow_parser/flow_parser.cmt" {"flow_parser.cmt"}
   "_build/install/default/lib/flow_parser/flow_parser.cmx" {"flow_parser.cmx"}
@@ -35,6 +36,9 @@ lib: [
   "_build/install/default/lib/flow_parser/flow_parser__File_key.cmi" {"flow_parser__File_key.cmi"}
   "_build/install/default/lib/flow_parser/flow_parser__File_key.cmt" {"flow_parser__File_key.cmt"}
   "_build/install/default/lib/flow_parser/flow_parser__File_key.cmx" {"flow_parser__File_key.cmx"}
+  "_build/install/default/lib/flow_parser/flow_parser__Flow_ast.cmi" {"flow_parser__Flow_ast.cmi"}
+  "_build/install/default/lib/flow_parser/flow_parser__Flow_ast.cmt" {"flow_parser__Flow_ast.cmt"}
+  "_build/install/default/lib/flow_parser/flow_parser__Flow_ast.cmx" {"flow_parser__Flow_ast.cmx"}
   "_build/install/default/lib/flow_parser/flow_parser__Jsx_parser.cmi" {"flow_parser__Jsx_parser.cmi"}
   "_build/install/default/lib/flow_parser/flow_parser__Jsx_parser.cmt" {"flow_parser__Jsx_parser.cmt"}
   "_build/install/default/lib/flow_parser/flow_parser__Jsx_parser.cmx" {"flow_parser__Jsx_parser.cmx"}

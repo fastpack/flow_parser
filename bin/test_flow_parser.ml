@@ -3,6 +3,7 @@
 let () =
   let parse_source ~types_in_comments source =
     let parse_options = Some Flow_parser.Parser_env.({
+        esproposal_nullish_coalescing = false;
         esproposal_optional_chaining = false;
         esproposal_class_instance_fields = true;
         esproposal_class_static_fields = true;
@@ -19,7 +20,9 @@ let () =
   let _ = parse_source ~types_in_comments:false source in
   print_endline "types_in_comments=false: OK";
   let () = try
-    parse_source ~types_in_comments:true source |> ignore
+    parse_source ~types_in_comments:true source
+    |> ignore
+    |> (fun () -> failwith "types_in_comments=false: Error")
   with
   | Flow_parser.Parse_error.Error _ ->
     print_endline "types_in_comments=true: OK";

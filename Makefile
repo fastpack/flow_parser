@@ -1,6 +1,6 @@
 .PHONY: clean build
 
-FLOW_VERSION = 0.70.0
+FLOW_VERSION = 0.81.0
 
 clean:
 	@rm -rf flow _build node_modules

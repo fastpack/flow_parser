@@ -1,6 +1,6 @@
 {
   "name": "@fastpack/flow_parser",
-  "version": "0.70.0",
+  "version": "0.81.0",
   "description": "Fastpack-specific package for flow_parser",
   "license": "MIT",
   "esy": {
@@ -23,7 +23,9 @@
     "@esy-ocaml/esy-installer": "^0.0.0",
     "@opam/dune": "*",
     "@opam/ocaml-migrate-parsetree": "*",
-    "@opam/ppx_tools_versioned": "5.2"
+    "@opam/ppx_tools_versioned": "5.2",
+    "@opam/ppx_deriving": "*",
+    "@opam/ppx_gen_rec": "*"
   },
   "peerDependencies": {
     "ocaml": ">= 4.3.0"
